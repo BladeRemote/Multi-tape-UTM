@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Multi-Tape UTM Visualizer</title>
+      <style>
+          :root{--bg:#f7f7fb;--card:#fff;--accent:#000000;--muted:#566}
+          body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial;margin:18px;background:var(--bg);color:#111}
+          h1{margin:0 0 6px}
+          .flex{display:flex;gap:12px}
+          textarea{width:100%;height:120px;font-family:monospace}
+          input,select,button,textarea{font-family:inherit}
+          .panel{background:var(--card);border:1px solid #000000;padding:12px;border-radius:10px}
+          .controls{display:flex;gap:8px;align-items:center;margin:8px 0}
+          .tapes{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+          .tape-row{display:flex;gap:8px;align-items:center}
+          .cell{min-width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #ddd;font-family:monospace;cursor:pointer}
+          .cell.head{background:var(--accent);color:white;border-color:#0b79a6}
+          .cell.sep{background:#f3f4f6;border-style:dashed;color:#333}
+          .cell.break{box-shadow:inset 0 0 0 3px rgba(255,0,0,0.12)}
+          .label{font-weight:600;margin-right:8px}
+          .status{margin-top:10px;padding:8px;background:var(--card);border:1px solid #eee;border-radius:8px}
+          .small{font-size:13px;color:var(--muted)}
+          .grid{display:grid;grid-template-columns:1fr 520px;gap:12px}
+          .log{height:180px;overflow:auto;background:#0f1724;color:#e6eef8;padding:8px;border-radius:6px;font-family:monospace}
+          .presets{display:flex;gap:8px;margin-top:6px}
+          @media(max-width:980px){.grid{grid-template-columns:1fr}}
+      </style>
+  </head>
+  <body>
+      <h1>Multi‑tape UTM Visualizer</h1>
+    <div class="small">Load a readable multi‑tape encoding or a base64 compact binary. Visualize multiple tapes side‑by‑side, or as a single concatenated tape with tape separators. Run step-by-step, set breakpoints, inspect logs, and save/load presets.</div>
+    <div style="margin-top:12px" class="grid">
+      <div class="panel">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="flex" style="align-items:center">
+            <label class="label">Encoding type:</label>
+            <select id="encType"><option value="readable">Readable</option><option value="binary">Base64 Binary</option></select>
+            <button id="importBtn">Import File</button>
+            <input id="fileInput" type="file" style="display:none" />
+          </div>
+          <textarea id="encodingInput" placeholder="Paste encoded TM+input here..."></textarea>
+          <div class="controls">
+            <button id="loadBtn">Load</button>
+            <button id="stepBtn">Step</button>
+            <button id="runBtn">Run</button>
+            <label><input id="autorun" type="checkbox"> Auto-run</label>
+            <label>Delay(ms): <input id="delay" value="200" style="width:70px"/></label>
+            <button id="resetBtn">Reset</button>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="label">Presets:</label>
+            <select id="presetSelect"></select>
+            <button id="savePreset">Save</button>
+            <button id="delPreset">Delete</button>
+          </div>
+            <label class="label">View mode:</label>
+            <select id="viewMode"><option value="multi">Multi‑tape (rows)</option><option value="single">Concatenated (single tape)</option></select>
+            <label style="margin-left:8px"><input id="showLog" type="checkbox" checked> Show debug log</label>
+          </div>
+          <div class="small">Breakpoints: click any cell to toggle a breakpoint (red ring). When a breakpoint is hit the machine pauses.</div>
+          <div class="status" id="statusBox">State: - | Steps: 0</div>
+        </div>
+      </div>
+      <div class="panel">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div id="tapesArea" class="tapes"></div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <div class="small">Current state: <strong id="curState">-</strong></div>
+            <div class="small">Head positions: <strong id="curHeads">-</strong></div>
+            <div class="small">Steps: <strong id="curSteps">0</strong></div>
+          </div>
+          <div style="margin-top:8px">
+            <div class="small">Debug log</div>
+            <div id="log" class="log"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+  <script>
+    // --- helpers (pctDecode + gamma + base64 + name-table support) ---
+    function pctDecode(s){
+      return s.replace(/%([0-9A-Fa-f]{2})/g,(m,g)=>String.fromCharCode(parseInt(g,16)));
+    }
+
+    function gammaDecode(bstr, idx){
+      let L=0;
+      const N=bstr.length;
+      while(idx<N && bstr[idx]==='0'){
+        L++; idx++;
+      }
+      if(idx>=N){
+        throw new Error('Unexpected end');
+      }
+      idx++;
+      const suffix = bstr.slice(idx, idx+L);
+      idx += L;
+      const val = parseInt('1'+suffix,2);
+      return [val, idx];
+    }
+
+    function base64ToRaw(b64){
+      return atob(b64);
+    }
+    function base64ToBitsFromRaw(raw){
+      const pad = raw.charCodeAt(0);
+      let bits='';
+      for(let i=1;i<raw.length;i++){
+        bits += raw.charCodeAt(i).toString(2).padStart(8,'0');
+      }
+      return pad? bits.slice(0, bits.length - pad) : bits;
+    }
+
+    // --- parsers ---
+    function parseReadable(enc){ const [left,right] = enc.split('###'); const parts = left.split('||'); if(parts.length!==9) throw new Error('Invalid readable encoding'); const num_tapes = parseInt(parts[0]); const states = parts[1]?parts[1].split(',').map(x=>pctDecode(x)):[]; const tape_alph = parts[3]?parts[3].split(',').map(x=>pctDecode(x)):[]; const blank = pctDecode(parts[4]); const start = pctDecode(parts[5]); const accept = parts[6]?parts[6].split(',').map(x=>pctDecode(x)):[]; const reject = parts[7]?parts[7].split(',').map(x=>pctDecode(x)):[]; const transitions_raw = parts[8]; const transitions = {}; if(transitions_raw){ transitions_raw.split('/').forEach(t=>{ if(!t.includes('->')) return; const [leftt,rightt] = t.split('->'); const leftp = leftt.split('%'); const st = pctDecode(leftp[0]); const read = leftp.slice(1).map(x=>pctDecode(x)); const rparts = rightt.split('%'); const nst = pctDecode(rparts[0]); const num_writes = read.length; const writes = rparts.slice(1,1+num_writes).map(x=>pctDecode(x)); const moves = rparts.slice(1+num_writes,1+num_writes+num_writes); transitions[st+'|'+read.join('|')] = { newstate:nst, writes, moves }; }); } const input_tapes = right? right.split('|').map(x=>pctDecode(x)) : new Array(num_tapes).fill(''); return { num_tapes, states, tape_alph, blank, start, accept, reject, transitions, input_tapes }; }
+
+    function parseBinary(b64){ // supports optional appended name-table JSON marker '<<<NAMES>>>'
+      const raw = base64ToRaw(b64);
+      // detect and extract name-table JSON if present
+      const marker = '<<<NAMES>>>';
+      let names = null;
+      let rawBitsPart = raw;
+      const idx = raw.indexOf(marker);
+      if(idx !== -1){ // split
+        const before = raw.slice(0, idx);
+        const after = raw.slice(idx + marker.length);
+        rawBitsPart = before;
+        try{ names = JSON.parse(after); } catch(e){ console.warn('Failed to parse name table JSON', e); }
+      }
+      const bits = base64ToBitsFromRaw(rawBitsPart);
+      let pos = 0;
+      const get = ()=>{
+        const [v,npos] = gammaDecode(bits, pos);
+        pos = npos; return v;
+      };
+      const T = get();
+      const num_states = get();
+      const num_symbols = get();
+      const blank_id = get();
+      const start_id = get();
+      const num_accept = get()-1;
+      const accept_ids = [];
+      for(let i=0;i<num_accept;i++){
+        accept_ids.push(get());
+      }
+      const num_reject = get()-1;
+      const reject_ids = [];
+      for(let i=0;i<num_reject;i++){
+        reject_ids.push(get());
+      }
+      const num_trans = get()-1;
+      const move_map_rev={1:'L',2:'R',3:'N'};
+      const transitions={};
+      for(let i=0;i<num_trans;i++){
+        const st = get();
+        const reads=[];
+        for(let j=0;j<T;j++){
+          reads.push(get());
+        }
+        const nst = get();
+        const writes=[];
+        for(let j=0;j<T;j++){
+          writes.push(get());
+        }
+        const moves=[];
+        for(let j=0;j<T;j++){
+          moves.push(move_map_rev[get()]);
+        }
+        transitions[st+'|'+reads.join('|')] = { newstate: nst, writes, moves };
+      }
+      const num_input = get()-1; const input_tapes=[]; for(let i=0;i<num_input;i++){ const L=get()-1; const tape=[]; for(let j=0;j<L;j++) tape.push(get()); input_tapes.push(tape); }
+      // Build tm object. If names table present, use it to map ids to original names
+      let tm = null;
+      if(names && names.stateNames && names.symbolNames){
+        const stateNames = names.stateNames; const symbolNames = names.symbolNames;
+        const transitionsNamed = {};
+        for(const key in transitions){ const parts = key.split('|'); const stid = parts[0]; const readIds = parts.slice(1).map(x=>parseInt(x,10)); const trans = transitions[key]; const newStateName = stateNames[trans.newstate] || ('q'+trans.newstate); const writeNames = trans.writes.map(w=> symbolNames[w] || ('S'+w)); const moveNames = trans.moves; const readNames = readIds.map(r=> symbolNames[r] || ('S'+r)); transitionsNamed[newStateName + '|' + readNames.join('|')] = { newstate: newStateName, writes: writeNames, moves: moveNames }; }
+        const inTapes = input_tapes.map(arr => arr.map(x=> symbolNames[x] || ('S'+x)).join(''));
+        tm = { num_tapes: T, states: stateNames, tape_alph: symbolNames, blank: symbolNames[blank_id], start: stateNames[start_id], accept: accept_ids.map(x=> stateNames[x]), reject: reject_ids.map(x=> stateNames[x]), transitions: transitionsNamed };
+        return { tm, input_tapes: inTapes };
+      }
+      // fallback: map to numeric placeholders q#, S#
+      const states = []; for(let i=1;i<=num_states;i++) states.push('q'+i);
+      const syms = []; for(let i=1;i<=num_symbols;i++) syms.push('S'+i);
+      const transitionsNamed = {};
+      for(const key in transitions){ const parts = key.split('|'); const stid = parts[0]; const readIds = parts.slice(1).map(x=>parseInt(x,10)); const trans = transitions[key]; const newState = 'q'+trans.newstate; const writeNames = trans.writes.map(w=> 'S'+w); const moves = trans.moves; const readNames = readIds.map(r=>'S'+r); transitionsNamed[newState + '|' + readNames.join('|')] = { newstate: newState, writes: writeNames, moves: moves }; }
+      const inTapes = input_tapes.map(arr => arr.map(x=>'S'+x).join(''));
+      tm = { num_tapes: T, states: states, tape_alph: syms, blank: 'S'+blank_id, start: 'q'+start_id, accept: accept_ids.map(x=>'q'+x), reject: reject_ids.map(x=>'q'+x), transitions: transitionsNamed };
+      return { tm, input_tapes: inTapes };
+    }
+
+    // --- UI state and rendering ---
+    let stateObj=null, autoTimer=null, breakpoints=new Map();
+    const tapesArea = document.getElementById('tapesArea'), statusBox=document.getElementById('statusBox'), logEl=document.getElementById('log');
+
+    function log(msg){ const time = new Date().toLocaleTimeString(); logEl.textContent = `[${time}] ${msg}
+` + logEl.textContent; }
+
+    function renderMulti(tm, tapes, heads){ tapesArea.innerHTML=''; for(let i=0;i<tm.num_tapes;i++){ const row=document.createElement('div'); row.className='tape-row'; const label=document.createElement('div'); label.className='label'; label.textContent = 'Tape '+i+':'; row.appendChild(label); const s = tapes[i].join(''); for(let j=0;j<s.length;j++){ const c=document.createElement('div'); c.className='cell'; c.textContent = s[j]; if(j===heads[i]) c.classList.add('head'); const key = `t${i}#${j}`; if(breakpoints.has(key)) c.classList.add('break'); c.onclick = (e)=>{ const kp = `t${i}#${j}`; if(breakpoints.has(kp)){ breakpoints.delete(kp); c.classList.remove('break'); log(`Removed breakpoint ${kp}`); } else { breakpoints.set(kp,true); c.classList.add('break'); log(`Added breakpoint ${kp}`); } }; row.appendChild(c); } tapesArea.appendChild(row); } updateStatus(); }
+
+    function renderSingle(tm, tapes, heads){ // concatenate tapes with separators
+      tapesArea.innerHTML=''; const row=document.createElement('div'); row.className='tape-row'; const label=document.createElement('div'); label.className='label'; label.textContent='Concatenated:'; row.appendChild(label);
+      let offset=0; for(let i=0;i<tm.num_tapes;i++){ // separator cell
+        const sep = document.createElement('div'); sep.className='cell sep'; sep.textContent = `|T${i}|`; row.appendChild(sep); offset += 1;
+        const s = tapes[i].join(''); for(let j=0;j<s.length;j++){ const c=document.createElement('div'); c.className='cell'; c.textContent = s[j]; const globalIdx = offset + j; // allow breakpoints keyed by t{i}#j as before
+          if(heads[i]===j){ c.classList.add('head'); }
+          const key = `t${i}#${j}`; if(breakpoints.has(key)) c.classList.add('break'); c.onclick = ()=>{ if(breakpoints.has(key)){ breakpoints.delete(key); c.classList.remove('break'); log(`Removed breakpoint ${key}`); } else { breakpoints.set(key,true); c.classList.add('break'); log(`Added breakpoint ${key}`); } }; row.appendChild(c); }
+        offset += s.length; }
+      tapesArea.appendChild(row); updateStatus(); }
+
+    function renderTapes(tm, tapes, heads){ const mode = document.getElementById('viewMode').value; if(mode==='multi') renderMulti(tm,tapes,heads); else renderSingle(tm,tapes,heads); document.getElementById('curState').textContent = stateObj? stateObj.state : '-'; document.getElementById('curHeads').textContent = stateObj? stateObj.heads.join(',') : '-'; document.getElementById('curSteps').textContent = stateObj? stateObj.steps : '0'; }
+
+    function updateStatus(final=false){ if(!stateObj) statusBox.textContent='State: - | Steps: 0'; else statusBox.textContent = `State: ${stateObj.state} | Steps: ${stateObj.steps} ${stateObj.halted? '| HALTED ('+(stateObj.haltAccept? 'ACCEPT':'REJECT')+')':''}`; if(final && autoTimer){ clearInterval(autoTimer); autoTimer=null; document.getElementById('autorun').checked=false; } }
+
+    // --- Load and control ---
+    document.getElementById('importBtn').onclick = ()=> document.getElementById('fileInput').click();
+    document.getElementById('fileInput').onchange = function(e){ const f = this.files[0]; if(!f) return; const r = new FileReader(); r.onload = ()=>{ document.getElementById('encodingInput').value = r.result; log('Imported file into encoding input'); }; r.readAsText(f); };
+
+    function loadTM(){ const encType = document.getElementById('encType').value; const enc = document.getElementById('encodingInput').value.trim(); if(!enc){ alert('Paste an encoding first'); return; } if(encType==='readable'){ const parsed = parseReadable(enc); const tapes = parsed.input_tapes.map(t=>('_'+t+'_').split('')); const heads = parsed.input_tapes.map(_=>1); stateObj = { tm: parsed, tapes, heads, state: parsed.start, steps:0, halted:false, haltAccept:false }; renderTapes(parsed, tapes, heads); log('Loaded readable encoding'); } else { try{ const decoded = parseBinary(enc); const tapes = decoded.input_tapes.map(arr=>('_'+arr+'_').split('')); const heads = decoded.input_tapes.map(_=>1); stateObj = { tm: decoded.tm, tapes, heads, state: decoded.tm.start, steps:0, halted:false, haltAccept:false }; renderTapes(decoded.tm, tapes, heads); log('Loaded binary encoding'); } catch(e){ alert('Binary parse error: '+e.message); log('Binary parse error: '+e.message); } } updateStatus(); }
+
+    function stepOnce(){ if(!stateObj){ alert('Load a TM first'); return false; } const tm = stateObj.tm; const tapes = stateObj.tapes; const heads = stateObj.heads; const T = tm.num_tapes; const read = []; for(let i=0;i<T;i++) read.push((heads[i]<0||heads[i]>=tapes[i].length)? tm.blank : tapes[i][heads[i]]); const key = stateObj.state + '|' + read.join('|'); const trans = tm.transitions[key]; if(!trans){ stateObj.halted=true; stateObj.haltAccept = tm.accept.includes(stateObj.state); log(`No transition for ${key}. HALT`); updateStatus(true); return false; } // write
+      for(let i=0;i<T;i++){ const w = trans.writes[i]; tapes[i][heads[i]] = (typeof w === 'number' || /^[0-9]+$/.test(w))? ('S'+w) : w; }
+      const prevState = stateObj.state; stateObj.state = (typeof trans.newstate === 'number')? ('q'+trans.newstate) : trans.newstate;
+      // move
+      for(let i=0;i<T;i++){ const m = trans.moves[i]; if(m==='R'){ heads[i]++; if(heads[i]>=tapes[i].length) tapes[i].push(tm.blank); } else if(m==='L'){ heads[i]--; if(heads[i]<0){ tapes[i].unshift(tm.blank); heads[i]=0; } } }
+      stateObj.steps += 1; log(`Step ${stateObj.steps}: ${prevState} [${read.join(',')}] -> ${stateObj.state} [writes:${trans.writes.join(',')}] moves:${trans.moves.join(',')}`);
+      // check breakpoints
+      for(let i=0;i<T;i++){ const keyBp = `t${i}#${heads[i]}`; if(breakpoints.has(keyBp)){ log(`Hit breakpoint ${keyBp} — pausing`); renderTapes(tm, tapes, heads); updateStatus(true); return false; } }
+      if(tm.accept.includes(stateObj.state) || tm.reject.includes(stateObj.state)){ stateObj.halted=true; stateObj.haltAccept = tm.accept.includes(stateObj.state); log(`Entered halting state ${stateObj.state}`); updateStatus(true); return false; }
+      renderTapes(tm, tapes, heads); updateStatus(); return true; }
+
+    document.getElementById('loadBtn').onclick = ()=> loadTM();
+    document.getElementById('stepBtn').onclick = ()=> stepOnce();
+    document.getElementById('runBtn').onclick = ()=>{
+      if(!stateObj){ alert('Load a machine first'); return; }
+      const delay = parseInt(document.getElementById('delay').value) || 200;
+      if(document.getElementById('autorun').checked){ if(autoTimer) clearInterval(autoTimer); autoTimer = setInterval(()=>{ if(stateObj && stateObj.halted) { clearInterval(autoTimer); autoTimer=null; } else stepOnce(); }, delay); }
+      else{ const runLoop = ()=>{ if(!stateObj.halted){ const ok=stepOnce(); if(ok) setTimeout(runLoop, 0); } }; runLoop(); }
+    };
+
+    document.getElementById('resetBtn').onclick = ()=>{ stateObj=null; tapesArea.innerHTML=''; statusBox.textContent='State: - | Steps: 0'; log('Reset machine'); if(autoTimer){ clearInterval(autoTimer); autoTimer=null; document.getElementById('autorun').checked=false; } };
+
+    // --- presets (localStorage) ---
+    const presetSelect = document.getElementById('presetSelect'); function loadPresets(){ const data = JSON.parse(localStorage.getItem('utm_presets')||'{}'); presetSelect.innerHTML=''; const opt = document.createElement('option'); opt.value=''; opt.textContent='-- choose preset --'; presetSelect.appendChild(opt); for(const k of Object.keys(data)) { const o=document.createElement('option'); o.value=k; o.textContent=k; presetSelect.appendChild(o); } }
+    document.getElementById('savePreset').onclick = ()=>{ const name = prompt('Preset name'); if(!name) return; const data = JSON.parse(localStorage.getItem('utm_presets')||'{}'); data[name] = document.getElementById('encodingInput').value; localStorage.setItem('utm_presets', JSON.stringify(data)); loadPresets(); log(`Saved preset ${name}`); };
+    document.getElementById('delPreset').onclick = ()=>{ const name = presetSelect.value; if(!name) return; const data = JSON.parse(localStorage.getItem('utm_presets')||'{}'); delete data[name]; localStorage.setItem('utm_presets', JSON.stringify(data)); loadPresets(); log(`Deleted preset ${name}`); };
+    presetSelect.onchange = ()=>{ const name=presetSelect.value; if(!name) return; const data = JSON.parse(localStorage.getItem('utm_presets')||'{}'); document.getElementById('encodingInput').value = data[name] || ''; log(`Loaded preset ${name} into editor`); };
+    loadPresets();
+
+    // show/hide log
+    document.getElementById('showLog').onchange = function(){ document.getElementById('log').style.display = this.checked? 'block':'none'; };
+
+    // initial
+    log('Visualizer ready');
+  </script>
+</html>

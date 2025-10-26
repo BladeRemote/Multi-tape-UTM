@@ -6,11 +6,17 @@ Built entirely in HTML, CSS, and JavaScript, it provides an elegant interface, l
 Features
 
 ✅ Multi-Tape Simulation — Supports single and multi-tape machines
+
 ✅ Readable Encoding Format — Paste custom machine definitions using a structured format
+
 ✅ Step-by-Step Execution — Run the machine manually or continuously
+
 ✅ Light/Dark Mode — Toggle for visual comfort
+
 ✅ Interactive Visualization — See tape movement and head transitions live
+
 ✅ Error Handling — Catches invalid formats and guides you with alerts
+
 ✅ Educational Design — Ideal for students learning automata theory and computation models
 
  Demo Screenshot

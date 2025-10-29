@@ -27,9 +27,13 @@ Features
 
 📂 Project Structure
 📦 multi-tape-tm-visualizer
+
 │
+
 ├── index.html          # Main application (all-in-one file)
+
 ├── README.md           # Documentation file
+
 └── examples.txt        # (Optional) Encoded TM examples
 
  How It Works

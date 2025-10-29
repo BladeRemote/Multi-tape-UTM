@@ -116,19 +116,27 @@ Real-time status and event log console
 🐞 Common Errors and Fixes
 Issue	Cause	Fix
 ❌ “Invalid code format”	Missing or extra `	
+
 ⚠️ “Load TM first”	Tried to Step/Run before clicking Load	Always click “Load” after pasting code
+
 🧩 Machine halts too early	No matching transition for current state/symbol	Add a rule to handle that symbol or check direction logic
+
 🌓 Theme not toggling	Cached older file or JavaScript disabled	Clear cache / enable JavaScript
+
 🧠 Example Encodings
+
 Unary Increment (adds 1)
+
 1||q0,qaccept||1,_||1,_||_||q0||qaccept||qreject||
 q0%1->q0%1%R/q0%_->qaccept%1%N###111
 
 Replace 0s with 1s
+
 1||q0,qaccept||0,1,_||0,1,_||_||q0||qaccept||qreject||
 q0%0->q0%1%R/q0%1->q0%1%R/q0%_->qaccept%_%N###010
 
 Unary Decrement
+
 1||q0,q1,qaccept||1,_||1,_||_||q0||qaccept||qreject||
 q0%1->q0%1%R/q0%_->q1%_%L/q1%1->qaccept%_%N###111
 

@@ -81,8 +81,6 @@ q0%1->q0%1%R/q0%_->qaccept%1%N
 
 Open index.html in any modern browser
 
-Choose Encoding Type → Readable
-
 Paste your machine definition into the textarea
 
 Click Load to initialize
@@ -118,14 +116,16 @@ Smooth dark/light theme toggle (🌙 / ☀️)
 Real-time status and event log console
 
 🐞 Common Errors and Fixes
+
 Issue	Cause	Fix
-❌ “Invalid code format”	Missing or extra `	
 
-⚠️ “Load TM first”	Tried to Step/Run before clicking Load	Always click “Load” after pasting code
+❌ “Invalid code format.”	Missing or extra pipe or percent characters
 
-🧩 Machine halts too early	No matching transition for current state/symbol	Add a rule to handle that symbol or check direction logic
+⚠️ “Load TM first.”	Tried to Step/Run before clicking Load.	Always click “Load” after pasting code
 
-🌓 Theme not toggling	Cached older file or JavaScript disabled	Clear cache / enable JavaScript
+🧩 Machine halts too early.	No matching transition for current state/symbol.	Add a rule to handle that symbol or check direction logic
+
+🌓 Theme not toggling.	Cached older file or JavaScript disabled.	Clear cache / enable JavaScript
 
 🧠 Example Encodings
 
@@ -176,7 +176,7 @@ Developers exploring simulation-based learning tools
 
 🧑‍💻 Author
 
-Developed by: [Your Name or GitHub Username]
+Developed by: BladeRemote and Ethan-cyber-rgb
 Year: 2025
 License: MIT
 
